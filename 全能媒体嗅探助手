@@ -162,7 +162,7 @@
         for (let i = 0; i < lines.length; i++) {
             if (lines[i].includes('#EXT-X-STREAM-INF')) {
                 const bwMatch = lines[i].match(/BANDWIDTH=(\d+)/i);
-                const bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+                const bw = bwMatch ? parseInt(bwMatch, 10) : 0;
 
                 let nextLineIndex = i + 1;
                 while (nextLineIndex < lines.length && (lines[nextLineIndex].trim().startsWith('#') || !lines[nextLineIndex].trim())) {
@@ -234,12 +234,14 @@
         setTimeout(() => { btn.textContent = oldText; }, 3000);
     }
 
-    // 6. 悬浮面板
+    // 6. 悬浮面板 (悬浮入口支持自由拖动及侧边折叠隐藏)
     class Panel {
         constructor() {
             this.box = null;
             this.listEl = null;
             this.toggle = null;
+            this.side = 'right'; // 当前停靠侧边：'left' 或 'right'
+            this.isCollapsed = false;
         }
 
         render() {
@@ -247,11 +249,11 @@
             const root = document.body || document.documentElement;
             if (!root) return;
 
-            // 悬浮球
+            // 悬浮球 (入口按钮：已加入拖拽吸附与贴边自动隐藏)
             this.toggle = document.createElement('div');
+            this.toggle.id = 'vspy-toggle';
             this.toggle.textContent = '🎬 嗅探';
-            this.toggle.style.cssText = 'position:fixed;right:0;top:45%;background:#fcd535;color:#1e2329;padding:8px 12px;font-size:13px;font-weight:bold;border-radius:8px 0 0 8px;cursor:pointer;z-index:2147483646;box-shadow:-2px 2px 10px rgba(0,0,0,0.15);user-select:none;';
-            this.toggle.onclick = () => { this.box.style.display = this.box.style.display === 'none' ? 'block' : 'none'; };
+            this.toggle.style.cssText = 'position:fixed;right:0;top:45%;background:#fcd535;color:#1e2329;padding:8px 12px;font-size:13px;font-weight:bold;border-radius:8px 0 0 8px;cursor:pointer;z-index:2147483646;box-shadow:-2px 2px 10px rgba(0,0,0,0.15);user-select:none;touch-action:none;transition:transform 0.25s ease, opacity 0.25s ease, border-radius 0.25s ease;';
 
             // 列表面板
             this.box = document.createElement('div');
@@ -268,7 +270,168 @@
             root.appendChild(this.toggle);
             root.appendChild(this.box);
             this.listEl = this.box.querySelector('#vspy-list');
-            this.box.querySelector('#vspy-close').onclick = () => { this.box.style.display = 'none'; };
+            this.box.querySelector('#vspy-close').onclick = () => {
+                this.box.style.display = 'none';
+                this.scheduleCollapse();
+            };
+
+            // 绑定悬浮球的拖动与侧边隐藏行为
+            this.setupToggleBehavior();
+        }
+
+        setupToggleBehavior() {
+            const el = this.toggle;
+            let isDragging = false;
+            let startX = 0, startY = 0;
+            let origLeft = 0, origTop = 0;
+            let hasMoved = false;
+            let hideTimer = null;
+
+            // 侧边隐藏逻辑：向屏幕侧边缩进，保留边缘露出一截把手，并降低不透明度
+            const collapse = () => {
+                if (this.box && this.box.style.display === 'block') return; // 面板打开中不隐藏
+                this.isCollapsed = true;
+                if (this.side === 'right') {
+                    el.style.transform = 'translateX(calc(100% - 14px))';
+                } else {
+                    el.style.transform = 'translateX(calc(-100% + 14px))';
+                }
+                el.style.opacity = '0.65';
+            };
+
+            // 悬停或点击时完全展开
+            const expand = () => {
+                this.isCollapsed = false;
+                el.style.transform = 'translateX(0)';
+                el.style.opacity = '1';
+            };
+
+            this.scheduleCollapse = () => {
+                clearTimeout(hideTimer);
+                hideTimer = setTimeout(collapse, 2200);
+            };
+
+            // 首次加载 2.5 秒后自动贴边微缩隐藏
+            hideTimer = setTimeout(collapse, 2500);
+
+            // 鼠标悬停完全滑出，移开后延时隐藏
+            el.addEventListener('mouseenter', () => {
+                clearTimeout(hideTimer);
+                expand();
+            });
+
+            el.addEventListener('mouseleave', () => {
+                this.scheduleCollapse();
+            });
+
+            // 拖动逻辑统一处理函数（兼容鼠标与触屏）
+            const onDown = (clientX, clientY) => {
+                isDragging = true;
+                hasMoved = false;
+                startX = clientX;
+                startY = clientY;
+
+                const rect = el.getBoundingClientRect();
+                origLeft = rect.left;
+                origTop = rect.top;
+
+                el.style.transition = 'none'; // 拖动时消除过渡动画延迟
+                clearTimeout(hideTimer);
+                expand();
+            };
+
+            const onMove = (clientX, clientY) => {
+                if (!isDragging) return;
+
+                const dx = clientX - startX;
+                const dy = clientY - startY;
+
+                if (Math.hypot(dx, dy) > 4) {
+                    hasMoved = true;
+                }
+
+                let newLeft = origLeft + dx;
+                let newTop = origTop + dy;
+
+                // 视口边界限制
+                newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - el.offsetWidth));
+                newTop = Math.max(10, Math.min(newTop, window.innerHeight - el.offsetHeight - 10));
+
+                el.style.left = `${newLeft}px`;
+                el.style.top = `${newTop}px`;
+                el.style.right = 'auto';
+            };
+
+            const onUp = () => {
+                if (!isDragging) return;
+                isDragging = false;
+                el.style.transition = 'transform 0.25s ease, opacity 0.25s ease, border-radius 0.25s ease, left 0.25s ease, right 0.25s ease';
+
+                if (hasMoved) {
+                    // 拖拽松开后贴边吸附（左侧或右侧）
+                    const curLeft = el.getBoundingClientRect().left;
+                    if (curLeft + el.offsetWidth / 2 < window.innerWidth / 2) {
+                        // 吸附至左侧
+                        this.side = 'left';
+                        el.style.left = '0px';
+                        el.style.right = 'auto';
+                        el.style.borderRadius = '0 8px 8px 0';
+                        el.style.boxShadow = '2px 2px 10px rgba(0,0,0,0.15)';
+                        if (this.box) {
+                            this.box.style.left = '15px';
+                            this.box.style.right = 'auto';
+                        }
+                    } else {
+                        // 吸附至右侧
+                        this.side = 'right';
+                        el.style.right = '0px';
+                        el.style.left = 'auto';
+                        el.style.borderRadius = '8px 0 0 8px';
+                        el.style.boxShadow = '-2px 2px 10px rgba(0,0,0,0.15)';
+                        if (this.box) {
+                            this.box.style.right = '15px';
+                            this.box.style.left = 'auto';
+                        }
+                    }
+                    this.scheduleCollapse();
+                } else {
+                    // 单纯点击：切换嗅探列表面板
+                    const isOpen = this.box.style.display === 'block';
+                    this.box.style.display = isOpen ? 'none' : 'block';
+                    if (!isOpen) {
+                        expand();
+                    } else {
+                        this.scheduleCollapse();
+                    }
+                }
+            };
+
+            // 鼠标拖动监听
+            el.addEventListener('mousedown', (e) => {
+                onDown(e.clientX, e.clientY);
+                if (e.preventDefault) e.preventDefault();
+            });
+            window.addEventListener('mousemove', (e) => {
+                if (isDragging) onMove(e.clientX, e.clientY);
+            });
+            window.addEventListener('mouseup', () => {
+                if (isDragging) onUp();
+            });
+
+            // 触屏滑动监听 (手机/平板浏览器兼容)
+            el.addEventListener('touchstart', (e) => {
+                if (e.touches && e.touches[0]) {
+                    onDown(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: true });
+            window.addEventListener('touchmove', (e) => {
+                if (isDragging && e.touches && e.touches[0]) {
+                    onMove(e.touches[0].clientX, e.touches[0].clientY);
+                }
+            }, { passive: true });
+            window.addEventListener('touchend', () => {
+                if (isDragging) onUp();
+            });
         }
 
         addToList(url, type) {
